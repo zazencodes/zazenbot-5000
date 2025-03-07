@@ -1,0 +1,4 @@
+.ruff_cache
+.credentials
+.env
+yt-video-metadata/
