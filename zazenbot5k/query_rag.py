@@ -2,7 +2,7 @@ import argparse
 import os
 
 import vertexai
-from config import CORPUS_NAME, GCP_LLM_MODEL_ID
+from config import CORPUS_NAME, GCP_LLM_MODEL_ID, SIMILARITY_TOP_K
 from dotenv import load_dotenv
 from vertexai.preview import rag
 from vertexai.preview.generative_models import GenerativeModel, Tool
@@ -35,7 +35,7 @@ def ask_rag_question(question: str):
                         rag_corpus=CORPUS_NAME,
                     )
                 ],
-                similarity_top_k=3,
+                similarity_top_k=SIMILARITY_TOP_K,
                 # vector_distance_threshold=VECTOR_DISTANCE_THRESHOLD,
             ),
         )

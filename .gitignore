@@ -1,4 +1,7 @@
 .ruff_cache
 .credentials
+credentials/
 .env
 yt-video-metadata/
+venv
+__pycache__
