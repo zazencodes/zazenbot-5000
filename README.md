@@ -136,3 +136,4 @@ venv/bin/python zazenbot5k/query_rag.py "Give me a bunch of data engineering hac
 # Include metadata lookup and provide as context in answer
 venv/bin/python zazenbot5k/query_rag_with_metadata.py "explain agents"
 ```
+
