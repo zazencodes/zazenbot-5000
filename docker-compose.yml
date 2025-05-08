@@ -10,7 +10,7 @@ services:
     environment:
       - GCP_PROJECT_ID=${GCP_PROJECT_ID}
       - GCP_LOCATION=${GCP_LOCATION}
-      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/google-credentials.json
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/.google-credentials.json
     volumes:
       - ./.credentials:/app/credentials
     restart: unless-stopped
