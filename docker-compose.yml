@@ -5,14 +5,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    ports:
-      - "8000:8000"
+    # ports:
+    #   - "8000:8000"
     environment:
       - GCP_PROJECT_ID=${GCP_PROJECT_ID}
       - GCP_LOCATION=${GCP_LOCATION}
       - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/google-credentials.json
     volumes:
-      - ./credentials:/app/credentials
+      - ./.credentials:/app/credentials
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -20,3 +20,11 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+    networks:
+      - zazenbot-network
+
+networks:
+  zazenbot-network:
+    driver: bridge
+    name: zazenbot-network
+
