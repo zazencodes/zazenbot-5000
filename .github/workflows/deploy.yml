@@ -26,5 +26,5 @@ jobs:
 
       - name: Restart ZazenBot
         run: |
-          ssh ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }} 'cd ${{ secrets.DEPLOY_PATH }} && ./restart_zazenbot.sh'
+          ssh ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }} 'cd /home/alex &&  ./restart_zazenbot.sh'
 
