@@ -2,7 +2,7 @@
 
 ## API Usage
 
-The ZazenBot 5000 can be run as a FastAPI application, either directly or using Docker.
+The ZazenBot 5000 can be run as a FastAPI application, either directly or using Docker. The API provides endpoints for querying the RAG system with metadata.
 
 ### Running with Docker
 
@@ -41,6 +41,47 @@ The ZazenBot 5000 can be run as a FastAPI application, either directly or using 
    ```bash
    python test_api.py "explain agents"
    ```
+
+### Testing the API Locally
+
+You can test the ZazenBot API locally using curl commands. Here are some examples:
+
+1. **Health Check**:
+   ```bash
+   curl http://localhost:8000/health
+   ```
+   Expected response: `{"status":"healthy"}`
+
+2. **Query the RAG System**:
+   ```bash
+   curl -X POST http://localhost:8000/query \
+     -H "Content-Type: application/json" \
+     -d '{"question":"What is RAG?"}'
+   ```
+
+3. **Testing with Complex Queries**:
+   ```bash
+   curl -X POST http://localhost:8000/query \
+     -H "Content-Type: application/json" \
+     -d '{"question":"Explain the differences between agents and assistants in AI"}'
+   ```
+
+4. **Saving Response to a File**:
+   ```bash
+   curl -X POST http://localhost:8000/query \
+     -H "Content-Type: application/json" \
+     -d '{"question":"Give me tips for data engineering"}'
+     -o response.txt
+   ```
+
+5. **Verbose Output for Debugging**:
+   ```bash
+   curl -v -X POST http://localhost:8000/query \
+     -H "Content-Type: application/json" \
+     -d '{"question":"What are some Neovim plugins?"}'
+   ```
+
+The API returns plain text responses that include the answer to your question enhanced with metadata from the RAG system.
 
 ### Running Directly
 
