@@ -149,20 +149,21 @@ def format_response(rag_response, metadata, timestamp):
     return formatted_response
 
 
-def process_question(question):
+def process_question(question: str, persona: str):
     """
     Process a user question through the RAG system and enhance with metadata and timestamp
 
     Args:
         question: The user's question
+        persona: The persona to use for the question
 
     Returns:
         Enhanced response string
     """
-    logger.info(f"Processing question: {question}")
+    logger.info(f"Processing question: {question} with persona: {persona}")
 
     # Get RAG response
-    rag_llm_response = get_rag_response(question)
+    rag_llm_response = get_rag_response(question, persona)
 
     # Extract context information
     context_title, context_text = extract_context_info(rag_llm_response)
@@ -181,18 +182,19 @@ def process_question(question):
     return formatted_response
 
 
-def get_rag_response(question):
+def get_rag_response(question: str, persona: str):
     """
     Send question to RAG system and get response
 
     Args:
         question: The user's question
+        persona: The persona to use for the question
 
     Returns:
         RAG response object
     """
     logger.info("Sending question to RAG system...")
-    rag_llm_response = ask_rag_question(question)
+    rag_llm_response = ask_rag_question(question, persona)
     logger.info(f"Received RAG response:\n{rag_llm_response}")
     return rag_llm_response
 
@@ -310,6 +312,16 @@ if __name__ == "__main__":
     )
     parser.add_argument("question", type=str, help="The question to ask")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument(
+        "--persona",
+        type=str,
+        choices=[
+            "politician",
+            "wannabe-influencer",
+            "robot-with-exitential-crisis",
+        ],
+        help="The persona to use for the question",
+    )
 
     args = parser.parse_args()
 
@@ -319,6 +331,6 @@ if __name__ == "__main__":
         logger.info("Debug logging enabled")
 
     logger.info(f"Starting query process with question: {args.question}")
-    enhanced_response = process_question(args.question)
+    enhanced_response = process_question(args.question, args.persona)
     logger.info("Query processing complete, printing response\n")
     print(enhanced_response)

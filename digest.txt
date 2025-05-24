@@ -1,0 +1,2155 @@
+Directory structure:
+└── zazenbot-5000/
+    ├── README.md
+    ├── Dockerfile
+    ├── docker-compose.yml
+    ├── integration_guide.md
+    ├── requirements.txt
+    ├── test_api.py
+    ├── .dockerignore
+    ├── .env.example
+    ├── notebooks/
+    │   └── dev.ipynb
+    ├── zazenbot5k/
+    │   ├── __init__.py
+    │   ├── app.py
+    │   ├── config.py
+    │   ├── create_rag_corpus.py
+    │   ├── delete_rag_corpus.py
+    │   ├── query_rag.py
+    │   ├── query_rag_with_metadata.py
+    │   ├── update_gcs_from_local.py
+    │   ├── upload_rag_corpus_files.py
+    │   └── __pycache__/
+    ├── .credentials/
+    └── .github/
+        └── workflows/
+            └── deploy.yml
+
+================================================
+File: README.md
+================================================
+# ZazenBot 5000
+
+## API Usage
+
+The ZazenBot 5000 can be run as a FastAPI application, either directly or using Docker. The API provides endpoints for querying the RAG system with metadata.
+
+### Running with Docker
+
+1. Set up your environment variables:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your GCP project details
+   ```
+
+2. Place your Google Cloud credentials JSON file in the `credentials` directory:
+   ```bash
+   # The file should be named google-credentials.json
+   mkdir -p credentials
+   # Copy your credentials file to credentials/google-credentials.json
+   ```
+
+3. Build and start the Docker container:
+   ```bash
+   docker-compose up -d
+   ```
+
+4. The API will be available at http://localhost:8000
+   - Health check: GET http://localhost:8000/health
+   - Query endpoint: POST http://localhost:8000/query
+
+5. Example queries:
+
+   Using curl:
+   ```bash
+   curl -X POST http://localhost:8000/query \
+     -H "Content-Type: application/json" \
+     -d '{"question": "explain agents"}'
+   ```
+
+   Using the provided Python script:
+   ```bash
+   python test_api.py "explain agents"
+   ```
+
+### Testing the API Locally
+
+You can test the ZazenBot API locally using curl commands. Here are some examples:
+
+1. **Health Check**:
+   ```bash
+   curl http://localhost:8000/health
+   ```
+   Expected response: `{"status":"healthy"}`
+
+2. **Query the RAG System**:
+   ```bash
+   curl -X POST http://localhost:8000/query \
+     -H "Content-Type: application/json" \
+     -d '{"question":"What is RAG?"}'
+   ```
+
+3. **Testing with Complex Queries**:
+   ```bash
+   curl -X POST http://localhost:8000/query \
+     -H "Content-Type: application/json" \
+     -d '{"question":"Explain the differences between agents and assistants in AI"}'
+   ```
+
+4. **Saving Response to a File**:
+   ```bash
+   curl -X POST http://localhost:8000/query \
+     -H "Content-Type: application/json" \
+     -d '{"question":"Give me tips for data engineering"}'
+     -o response.txt
+   ```
+
+5. **Verbose Output for Debugging**:
+   ```bash
+   curl -v -X POST http://localhost:8000/query \
+     -H "Content-Type: application/json" \
+     -d '{"question":"What are some Neovim plugins?"}'
+   ```
+
+The API returns plain text responses that include the answer to your question enhanced with metadata from the RAG system.
+
+### Running Directly
+
+1. Install the required dependencies:
+   ```bash
+   pip install -r requirements.txt
+   pip install fastapi uvicorn
+   ```
+
+2. Run the FastAPI application:
+   ```bash
+   cd zazenbot5k
+   uvicorn app:app --host 0.0.0.0 --port 8000
+   ```
+
+## Add new video
+
+1. Create folder in `yt-video-metadata`, e.g.
+
+```plaintext
+yt-video-metadata/2025_01_08_finally_figured_out_what_to_do
+├── info.json
+├── summary.md
+├── transcript_text.txt
+└── transcript_markers.txt
+```
+
+Use GPT for summary and info (see [notion SOP](https://www.notion.so/cotillion19/Generate-summary-SOP-1ae52790491144299906782b5cf38336) for prompts)
+
+2. Create and populate rag corpus
+
+```bash
+# Upload local files (has CLI arg for uploading just one)
+python zazenbot5k/update_gcs_from_local.py
+
+# Create RAG corpus (only run this once)
+python zazenbot5k/create_rag_corpus.py
+
+# To delete it
+# python zazenbot5k/delete_rag_corpus.py
+
+# Update with new files in cloud storage (will only process new files)
+python zazenbot5k/upload_rag_corpus_files.py
+```
+
+3. Ask a question
+
+```bash
+# Just ask a basic question using RAG
+venv/bin/python zazenbot5k/query_rag.py "Give me a bunch of data engineering hacks for Neovim."
+
+# Include metadata lookup and provide as context in answer
+venv/bin/python zazenbot5k/query_rag_with_metadata.py "explain agents"
+```
+
+
+
+
+================================================
+File: Dockerfile
+================================================
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Copy requirements file
+COPY requirements.txt .
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
+# Install dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install FastAPI and Uvicorn
+RUN pip install --no-cache-dir fastapi uvicorn
+
+# Copy application code
+COPY zazenbot5k/ /app/zazenbot5k/
+
+# Set Python path to include the application directory
+ENV PYTHONPATH=/app
+
+# Set working directory to the application directory
+WORKDIR /app/zazenbot5k
+
+# Expose the port the app runs on
+EXPOSE 8000
+
+# Command to run the application
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+
+
+
+================================================
+File: docker-compose.yml
+================================================
+version: '3.8'
+
+services:
+  zazenbot-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # ports:
+    #   - "8000:8000"
+    environment:
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
+      - GCP_LOCATION=${GCP_LOCATION}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/.google-credentials.json
+    volumes:
+      - ./.credentials:/app/credentials
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - zazenbot-network
+
+networks:
+  zazenbot-network:
+    driver: bridge
+    name: zazenbot-network
+
+
+
+
+================================================
+File: integration_guide.md
+================================================
+# ZazenBot Integration Guide
+
+This document provides information on how to integrate other services with the ZazenBot API using Docker networks.
+
+## Network Configuration
+
+The ZazenBot API service is configured to use a Docker network called `zazenbot-network`. This network allows for seamless communication between the ZazenBot API and other services that need to interact with it.
+
+## Connecting Your Service to ZazenBot
+
+### 1. Add Your Service to the Docker Compose File
+
+To connect your service to the ZazenBot API, add your service definition to the `docker-compose.yml` file and include the `zazenbot-network` in its networks configuration:
+
+```yaml
+services:
+  your-service-name:
+    image: your-service-image
+    # Other service configurations...
+    networks:
+      - zazenbot-network
+```
+
+### 2. Service Discovery
+
+Within the Docker network, services can communicate with each other using their service names as hostnames. For example, to connect to the ZazenBot API from your service:
+
+```
+http://zazenbot-api:8000/
+```
+
+### 3. Example Integration
+
+Here's an example of how to add a new service that communicates with the ZazenBot API:
+
+```yaml
+version: '3.8'
+
+services:
+  zazenbot-api:
+    # Existing configuration...
+    networks:
+      - zazenbot-network
+      
+  client-service:
+    image: your-client-image
+    depends_on:
+      - zazenbot-api
+    environment:
+      - ZAZENBOT_API_URL=http://zazenbot-api:8000
+    networks:
+      - zazenbot-network
+
+networks:
+  zazenbot-network:
+    driver: bridge
+```
+
+## API Endpoints
+
+To interact with the ZazenBot API, your service can make HTTP requests to the following endpoints:
+
+- Health Check: `GET http://zazenbot-api:8000/health`
+- Other endpoints as documented in the API documentation
+
+## Security Considerations
+
+- The network is currently configured as a bridge network, which is isolated from the host network.
+- For production deployments, consider implementing additional security measures such as:
+  - API authentication
+  - Network encryption
+  - Access control policies
+
+## Troubleshooting
+
+If your service is having trouble connecting to the ZazenBot API:
+
+1. Ensure both services are connected to the `zazenbot-network`
+2. Verify that the ZazenBot API service is running and healthy
+3. Check that you're using the correct service name (`zazenbot-api`) and port (`8000`) in your connection URL
+4. Inspect the network using `docker network inspect zazenbot-network`
+
+## External Access
+
+If you need to access the ZazenBot API from outside the Docker network:
+
+- The API is exposed on port 8000 of the host machine
+- External services can connect via `http://host-ip:8000`
+
+## Further Customization
+
+For more complex network configurations, such as connecting to external networks or implementing overlay networks for multi-host deployments, refer to the [Docker Networking documentation](https://docs.docker.com/network/).
+
+
+
+================================================
+File: requirements.txt
+================================================
+python-dotenv==1.0.1
+google-cloud-storage==2.19.0
+google-cloud-aiplatform==1.83.0
+fastapi==0.110.0
+uvicorn==0.27.1
+pydantic==2.6.1
+requests==2.31.0
+
+
+
+================================================
+File: test_api.py
+================================================
+#!/usr/bin/env python3
+"""
+Test script for the ZazenBot 5000 API
+"""
+import argparse
+import requests
+import json
+
+def query_api(question, url="http://localhost:8000"):
+    """
+    Send a question to the ZazenBot 5000 API
+    
+    Args:
+        question: The question to ask
+        url: The base URL of the API
+        
+    Returns:
+        The API response text
+    """
+    endpoint = f"{url}/query"
+    headers = {"Content-Type": "application/json"}
+    data = {"question": question}
+    
+    print(f"Sending question to {endpoint}: {question}")
+    response = requests.post(endpoint, headers=headers, data=json.dumps(data))
+    
+    if response.status_code == 200:
+        return response.text
+    else:
+        print(f"Error: {response.status_code}")
+        print(response.text)
+        return None
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Test the ZazenBot 5000 API")
+    parser.add_argument("question", type=str, help="The question to ask")
+    parser.add_argument("--url", type=str, default="http://localhost:8000", 
+                        help="The base URL of the API (default: http://localhost:8000)")
+    
+    args = parser.parse_args()
+    
+    response = query_api(args.question, args.url)
+    if response:
+        print("\nResponse:")
+        print(response)
+
+
+
+================================================
+File: .dockerignore
+================================================
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+.env
+
+# Credentials
+credentials/
+.credentials/
+
+# Data
+yt-video-metadata/
+
+# Notebooks
+notebooks/
+
+# Docker
+.dockerignore
+Dockerfile
+docker-compose.yml
+
+# Misc
+.ruff_cache/
+.DS_Store
+
+
+
+================================================
+File: .env.example
+================================================
+# Google Cloud Platform settings
+GCP_PROJECT_ID=your-project-id
+GCP_LOCATION=us-central1
+
+# Note: You need to place your Google Cloud credentials JSON file in the credentials directory
+# The file should be named google-credentials.json
+
+
+
+================================================
+File: notebooks/dev.ipynb
+================================================
+# Jupyter notebook converted to Python script.
+
+from vertexai.preview import rag
+import vertexai
+import os
+from vertexai.preview.rag.utils.resources import ChunkingConfig, TransformationConfig
+
+
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"]="../.credentials/.zazencodes-2b1cb01be0fa.json"
+
+PROJECT_ID="zazencodes"
+LOCATION="us-central1"
+
+vertexai.init(project=PROJECT_ID, location=LOCATION)
+
+
+rag.list_corpora()
+# Output:
+#   ListRagCorporaPager<rag_corpora {
+
+#     name: "projects/zazencodes/locations/us-central1/ragCorpora/1152921504606846976"
+
+#     display_name: "zazenbot-5000-video-transcripts"
+
+#     description: "Transcripts and other metadata for ZazenCodes YouTube videos"
+
+#     create_time {
+
+#       seconds: 1741265740
+
+#       nanos: 490300000
+
+#     }
+
+#     update_time {
+
+#       seconds: 1741265740
+
+#       nanos: 490300000
+
+#     }
+
+#     rag_embedding_model_config {
+
+#       vertex_prediction_endpoint {
+
+#         endpoint: "projects/890511813715/locations/us-central1/publishers/google/models/text-embedding-005"
+
+#       }
+
+#     }
+
+#     rag_vector_db_config {
+
+#       rag_managed_db {
+
+#       }
+
+#       rag_embedding_model_config {
+
+#         vertex_prediction_endpoint {
+
+#           endpoint: "projects/890511813715/locations/us-central1/publishers/google/models/text-embedding-005"
+
+#         }
+
+#       }
+
+#     }
+
+#     corpus_status {
+
+#       state: ACTIVE
+
+#     }
+
+#     vector_db_config {
+
+#       rag_managed_db {
+
+#       }
+
+#       rag_embedding_model_config {
+
+#         vertex_prediction_endpoint {
+
+#           endpoint: "projects/890511813715/locations/us-central1/publishers/google/models/text-embedding-005"
+
+#         }
+
+#       }
+
+#     }
+
+#     rag_files_count: 11
+
+#   }
+
+#   >
+
+rag.delete_corpus("projects/zazencodes/locations/us-central1/ragCorpora/1152921504606846976")
+
+# Output:
+#   Successfully deleted the RagCorpus.
+
+
+rag.list_corpora()
+# Output:
+#   ListRagCorporaPager<>
+
+corpus = rag.create_corpus(
+    display_name="zazenbot-5000-video-transcripts",
+    description="Transcripts and other metadata for ZazenCodes YouTube videos",
+)
+print("Created corpus:", corpus)
+# Output:
+#   Created corpus: RagCorpus(name='projects/890511813715/locations/us-central1/ragCorpora/5685794529555251200', display_name='zazenbot-5000-video-transcripts', description='Transcripts and other metadata for ZazenCodes YouTube videos', embedding_model_config=EmbeddingModelConfig(publisher_model='projects/890511813715/locations/us-central1/publishers/google/models/text-embedding-005', endpoint=None, model=None, model_version_id=None), vector_db=RagManagedDb(), vertex_ai_search_config=None, backend_config=RagVectorDbConfig(vector_db=RagManagedDb(), rag_embedding_model_config=None))
+
+
+corpus_name = "projects/890511813715/locations/us-central1/ragCorpora/5685794529555251200"
+corpus = rag.get_corpus(corpus_name)
+print(corpus)
+# Output:
+#   RagCorpus(name='projects/890511813715/locations/us-central1/ragCorpora/5685794529555251200', display_name='zazenbot-5000-video-transcripts', description='Transcripts and other metadata for ZazenCodes YouTube videos', embedding_model_config=EmbeddingModelConfig(publisher_model='projects/890511813715/locations/us-central1/publishers/google/models/text-embedding-005', endpoint=None, model=None, model_version_id=None), vector_db=RagManagedDb(), vertex_ai_search_config=None, backend_config=RagVectorDbConfig(vector_db=RagManagedDb(), rag_embedding_model_config=RagEmbeddingModelConfig(vertex_prediction_endpoint=VertexPredictionEndpoint(endpoint=None, publisher_model='projects/890511813715/locations/us-central1/publishers/google/models/text-embedding-005', model=None, model_version_id=None))))
+
+
+# To delete it run this:
+# rag.delete_corpus(name=corpus_name)
+
+rag
+# Output:
+#   <module 'vertexai.preview.rag' from '/Users/alex/pro/zazenbot-5000/venv/lib/python3.12/site-packages/vertexai/preview/rag/__init__.py'>
+
+rag.import_files?
+# Output:
+#   [31mSignature:[39m
+
+#   rag.import_files(
+
+#       corpus_name: str,
+
+#       paths: Optional[Sequence[str]] = [38;5;28;01mNone[39;00m,
+
+#       source: Union[vertexai.preview.rag.utils.resources.SlackChannelsSource, vertexai.preview.rag.utils.resources.JiraSource, vertexai.preview.rag.utils.resources.SharePointSources, NoneType] = [38;5;28;01mNone[39;00m,
+
+#       chunk_size: int = [32m1024[39m,
+
+#       chunk_overlap: int = [32m200[39m,
+
+#       transformation_config: Optional[vertexai.preview.rag.utils.resources.TransformationConfig] = [38;5;28;01mNone[39;00m,
+
+#       timeout: int = [32m600[39m,
+
+#       max_embedding_requests_per_min: int = [32m1000[39m,
+
+#       use_advanced_pdf_parsing: Optional[bool] = [38;5;28;01mFalse[39;00m,
+
+#       partial_failures_sink: Optional[str] = [38;5;28;01mNone[39;00m,
+
+#       layout_parser: Optional[vertexai.preview.rag.utils.resources.LayoutParserConfig] = [38;5;28;01mNone[39;00m,
+
+#       llm_parser: Optional[vertexai.preview.rag.utils.resources.LlmParserConfig] = [38;5;28;01mNone[39;00m,
+
+#   ) -> google.cloud.aiplatform_v1beta1.types.vertex_rag_data_service.ImportRagFilesResponse
+
+#   [31mDocstring:[39m
+
+#   Import files to an existing RagCorpus, wait until completion.
+
+#   
+
+#   Example usage:
+
+#   
+
+#   ```
+
+#   import vertexai
+
+#   from vertexai.preview import rag
+
+#   from google.protobuf import timestamp_pb2
+
+#   
+
+#   vertexai.init(project="my-project")
+
+#   # Google Drive example
+
+#   paths = [
+
+#       "https://drive.google.com/file/d/123",
+
+#       "https://drive.google.com/drive/folders/456"
+
+#   ]
+
+#   # Google Cloud Storage example
+
+#   paths = ["gs://my_bucket/my_files_dir", ...]
+
+#   
+
+#   transformation_config = TransformationConfig(
+
+#       chunking_config=ChunkingConfig(
+
+#           chunk_size=1024,
+
+#           chunk_overlap=200,
+
+#       ),
+
+#   )
+
+#   
+
+#   response = rag.import_files(
+
+#       corpus_name="projects/my-project/locations/us-central1/ragCorpora/my-corpus-1",
+
+#       paths=paths,
+
+#       transformation_config=transformation_config,
+
+#   )
+
+#   
+
+#   # Slack example
+
+#   start_time = timestamp_pb2.Timestamp()
+
+#   start_time.FromJsonString('2020-12-31T21:33:44Z')
+
+#   end_time = timestamp_pb2.Timestamp()
+
+#   end_time.GetCurrentTime()
+
+#   source = rag.SlackChannelsSource(
+
+#       channels = [
+
+#           SlackChannel("channel1", "api_key1"),
+
+#           SlackChannel("channel2", "api_key2", start_time, end_time)
+
+#       ],
+
+#   )
+
+#   # Jira Example
+
+#   jira_query = rag.JiraQuery(
+
+#       email="xxx@yyy.com",
+
+#       jira_projects=["project1", "project2"],
+
+#       custom_queries=["query1", "query2"],
+
+#       api_key="api_key",
+
+#       server_uri="server.atlassian.net"
+
+#   )
+
+#   source = rag.JiraSource(
+
+#       queries=[jira_query],
+
+#   )
+
+#   
+
+#   response = rag.import_files(
+
+#       corpus_name="projects/my-project/locations/us-central1/ragCorpora/my-corpus-1",
+
+#       source=source,
+
+#       transformation_config=transformation_config,
+
+#   )
+
+#   
+
+#   # SharePoint Example.
+
+#   sharepoint_query = rag.SharePointSource(
+
+#       sharepoint_folder_path="https://my-sharepoint-site.com/my-folder",
+
+#       sharepoint_site_name="my-sharepoint-site.com",
+
+#       client_id="my-client-id",
+
+#       client_secret="my-client-secret",
+
+#       tenant_id="my-tenant-id",
+
+#       drive_id="my-drive-id",
+
+#   )
+
+#   source = rag.SharePointSources(
+
+#       share_point_sources=[sharepoint_query],
+
+#   )
+
+#   
+
+#   # Return the number of imported RagFiles after completion.
+
+#   print(response.imported_rag_files_count)
+
+#   
+
+#   ```
+
+#   Args:
+
+#       corpus_name: The name of the RagCorpus resource into which to import files.
+
+#           Format: ``projects/{project}/locations/{location}/ragCorpora/{rag_corpus}``
+
+#           or ``{rag_corpus}``.
+
+#       paths: A list of uris. Eligible uris will be Google Cloud Storage
+
+#           directory ("gs://my-bucket/my_dir") or a Google Drive url for file
+
+#           (https://drive.google.com/file/... or folder
+
+#           "https://drive.google.com/corp/drive/folders/...").
+
+#       source: The source of the Slack or Jira import.
+
+#           Must be either a SlackChannelsSource or JiraSource.
+
+#       chunk_size: The size of the chunks. This field is deprecated. Please use
+
+#           transformation_config instead.
+
+#       chunk_overlap: The overlap between chunks. This field is deprecated. Please use
+
+#           transformation_config instead.
+
+#       transformation_config: The config for transforming the imported
+
+#           RagFiles.
+
+#       max_embedding_requests_per_min:
+
+#           Optional. The max number of queries per
+
+#           minute that this job is allowed to make to the
+
+#           embedding model specified on the corpus. This
+
+#           value is specific to this job and not shared
+
+#           across other import jobs. Consult the Quotas
+
+#           page on the project to set an appropriate value
+
+#           here. If unspecified, a default value of 1,000
+
+#           QPM would be used.
+
+#       timeout: Default is 600 seconds.
+
+#       use_advanced_pdf_parsing: Whether to use advanced PDF
+
+#           parsing on uploaded files. This field is deprecated.
+
+#       partial_failures_sink: Either a GCS path to store partial failures or a
+
+#           BigQuery table to store partial failures. The format is
+
+#           "gs://my-bucket/my/object.ndjson" for GCS or
+
+#           "bq://my-project.my-dataset.my-table" for BigQuery. An existing GCS
+
+#           object cannot be used. However, the BigQuery table may or may not
+
+#           exist - if it does not exist, it will be created. If it does exist,
+
+#           the schema will be checked and the partial failures will be appended
+
+#           to the table.
+
+#       layout_parser: Configuration for the Document AI Layout Parser Processor
+
+#           to use for document parsing. Optional.
+
+#           If not None, the other parser configs must be None.
+
+#       llm_parser: Configuration for the LLM Parser to use for document parsing.
+
+#           Optional.
+
+#           If not None, the other parser configs must be None.
+
+#   Returns:
+
+#       ImportRagFilesResponse.
+
+#   [31mFile:[39m      ~/pro/zazenbot-5000/venv/lib/python3.12/site-packages/vertexai/preview/rag/rag_data.py
+
+#   [31mType:[39m      function
+
+rag.list_files(corpus_name=corpus_name)
+# Output:
+#   ListRagFilesPager<>
+
+transformation_config = TransformationConfig(
+    chunking_config=ChunkingConfig(
+        chunk_size=512,
+        chunk_overlap=100,
+    ),
+)
+
+response = rag.import_files(
+    corpus_name=corpus_name,
+    paths=[f"gs://zazenbot-5000/yt-rag/transcript-markers"],
+    transformation_config=transformation_config,
+)
+
+
+files = rag.list_files(corpus_name=corpus_name)
+for file in files:
+    print(file.display_name)
+    print(file.name)
+# Output:
+#   2025_01_08_finally_figured_out_what_to_do.txt
+
+#   projects/890511813715/locations/us-central1/ragCorpora/5685794529555251200/ragFiles/5385707230544743269
+
+#   2025_01_21_how_i_use_ai_for_my_data_engineering_work.txt
+
+#   projects/890511813715/locations/us-central1/ragCorpora/5685794529555251200/ragFiles/5385707236411540478
+
+#   2025_01_15_the_awesome_power_of_an_llm_in_your_terminal.txt
+
+#   projects/890511813715/locations/us-central1/ragCorpora/5685794529555251200/ragFiles/5385707236417156356
+
+#   2025_01_24_12_neovim_ai_data_engineering_use_cases.txt
+
+#   projects/890511813715/locations/us-central1/ragCorpora/5685794529555251200/ragFiles/5385707237529713032
+
+#   2025_02_05_100_ai_job_postings_later_heres_whats_actually_in_demand.txt
+
+#   projects/890511813715/locations/us-central1/ragCorpora/5685794529555251200/ragFiles/5385707320646708101
+
+#   2025_01_29_data_jobs_in_2025.txt
+
+#   projects/890511813715/locations/us-central1/ragCorpora/5685794529555251200/ragFiles/5385707323063833009
+
+#   2025_02_19_5_level_gear_guide_for_modern_tech_workers.txt
+
+#   projects/890511813715/locations/us-central1/ragCorpora/5685794529555251200/ragFiles/5385707324731587909
+
+#   2025_02_12_how_to_setup_and_run_deepseek_r1_locally_using_ollama.txt
+
+#   projects/890511813715/locations/us-central1/ragCorpora/5685794529555251200/ragFiles/5385707325078734274
+
+#   2025_02_26_ai_startup_tier_list_whats_worth_building_in_2025.txt
+
+#   projects/890511813715/locations/us-central1/ragCorpora/5685794529555251200/ragFiles/5385707325558093860
+
+#   2025_03_05_i_built_an_ai_physics_agent_that_drafts_research_papers.txt
+
+#   projects/890511813715/locations/us-central1/ragCorpora/5685794529555251200/ragFiles/5385707329289450657
+
+#   2025_03_12_learn_how_to_build_tool_calling_agents_with_langgraph.txt
+
+#   projects/890511813715/locations/us-central1/ragCorpora/5685794529555251200/ragFiles/5385707330866729376
+
+
+rag.retrieval_query?
+# Output:
+#   [31mSignature:[39m
+
+#   rag.retrieval_query(
+
+#       text: str,
+
+#       rag_resources: Optional[List[vertexai.preview.rag.utils.resources.RagResource]] = [38;5;28;01mNone[39;00m,
+
+#       rag_corpora: Optional[List[str]] = [38;5;28;01mNone[39;00m,
+
+#       similarity_top_k: Optional[int] = [38;5;28;01mNone[39;00m,
+
+#       vector_distance_threshold: Optional[float] = [38;5;28;01mNone[39;00m,
+
+#       vector_search_alpha: Optional[float] = [38;5;28;01mNone[39;00m,
+
+#       rag_retrieval_config: Optional[vertexai.preview.rag.utils.resources.RagRetrievalConfig] = [38;5;28;01mNone[39;00m,
+
+#   ) -> google.cloud.aiplatform_v1beta1.types.vertex_rag_service.RetrieveContextsResponse
+
+#   [31mDocstring:[39m
+
+#   Retrieve top k relevant docs/chunks.
+
+#   
+
+#   Example usage:
+
+#   ```
+
+#   import vertexai
+
+#   
+
+#   vertexai.init(project="my-project")
+
+#   
+
+#   # Using deprecated parameters
+
+#   results = vertexai.preview.rag.retrieval_query(
+
+#       text="Why is the sky blue?",
+
+#       rag_resources=[vertexai.preview.rag.RagResource(
+
+#           rag_corpus="projects/my-project/locations/us-central1/ragCorpora/rag-corpus-1",
+
+#           rag_file_ids=["rag-file-1", "rag-file-2", ...],
+
+#       )],
+
+#       similarity_top_k=2,
+
+#       vector_distance_threshold=0.5,
+
+#       vector_search_alpha=0.5,
+
+#   )
+
+#   
+
+#   # Using RagRetrievalConfig. Equivalent to the above example.
+
+#   config = vertexai.preview.rag.RagRetrievalConfig(
+
+#       top_k=2,
+
+#       filter=vertexai.preview.rag.Filter(
+
+#           vector_distance_threshold=0.5
+
+#       ),
+
+#       hybrid_search=vertexai.preview.rag.rag_retrieval_config.hybrid_search(
+
+#           alpha=0.5
+
+#       ),
+
+#       ranking=vertex.preview.rag.Ranking(
+
+#           llm_ranker=vertexai.preview.rag.LlmRanker(
+
+#               model_name="gemini-1.5-flash-002"
+
+#           )
+
+#       )
+
+#   )
+
+#   
+
+#   results = vertexai.preview.rag.retrieval_query(
+
+#       text="Why is the sky blue?",
+
+#       rag_resources=[vertexai.preview.rag.RagResource(
+
+#           rag_corpus="projects/my-project/locations/us-central1/ragCorpora/rag-corpus-1",
+
+#           rag_file_ids=["rag-file-1", "rag-file-2", ...],
+
+#       )],
+
+#       rag_retrieval_config=config,
+
+#   )
+
+#   ```
+
+#   
+
+#   Args:
+
+#       text: The query in text format to get relevant contexts.
+
+#       rag_resources: A list of RagResource. It can be used to specify corpus
+
+#           only or ragfiles. Currently only support one corpus or multiple files
+
+#           from one corpus. In the future we may open up multiple corpora support.
+
+#       rag_corpora: If rag_resources is not specified, use rag_corpora as a list
+
+#           of rag corpora names. Deprecated. Use rag_resources instead.
+
+#       similarity_top_k: The number of contexts to retrieve. Deprecated. Use
+
+#           rag_retrieval_config.top_k instead.
+
+#       vector_distance_threshold: Optional. Only return contexts with vector
+
+#           distance smaller than the threshold. Deprecated. Use
+
+#           rag_retrieval_config.filter.vector_distance_threshold instead.
+
+#       vector_search_alpha: Optional. Controls the weight between dense and
+
+#           sparse vector search results. The range is [0, 1], where 0 means
+
+#           sparse vector search only and 1 means dense vector search only.
+
+#           The default value is 0.5. Deprecated. Use
+
+#           rag_retrieval_config.hybrid_search.alpha instead.
+
+#       rag_retrieval_config: Optional. The config containing the retrieval
+
+#           parameters, including top_k, vector_distance_threshold,
+
+#           and alpha.
+
+#   
+
+#   Returns:
+
+#       RetrieveContextsResonse.
+
+#   [31mFile:[39m      ~/pro/zazenbot-5000/venv/lib/python3.12/site-packages/vertexai/preview/rag/rag_retrieval.py
+
+#   [31mType:[39m      function
+
+results = rag.retrieval_query(
+    text="what is my purpose?",
+    rag_resources=[rag.RagResource(
+        rag_corpus=corpus_name,
+        # rag_file_ids=["rag-file-1", "rag-file-2", ...],
+    )],
+    similarity_top_k=3,  # Optional
+    # vector_distance_threshold=0.5,  # Optional
+    # rag_retrieval_config=config,
+)
+
+# Results are sorted with lowest (best) score firstq
+# Chat about how to interpret scores from vertex AI: https://chatgpt.com/share/67c9a183-f37c-8004-b6da-555a56f49e16
+# TLDR: the score represents the cosine distance, defined as 1 minus the cosine similarity: 0 is the best. 2 is the worst.
+results
+# Output:
+#   contexts {
+
+#     contexts {
+
+#       source_uri: "gs://zazenbot-5000/yt-rag/transcript-markers/2025_02_05_100_ai_job_postings_later_heres_whats_actually_in_demand.txt"
+
+#       text: "And that\'s it. So you guys. If you\'re feeling like this guy right now, I understand.\n\n[00:14:02] I felt like this guy, most days of my life, I am this guy, but, um, the most important question I have for you right now is what did I miss in this presentation? Because I\'d love to have more of a community, uh, sort of voice and discussion in the comments. So go down there and add in like what you think I missed, or maybe what you think I got wrong so that we can all have a.\n\n[00:14:24] better understanding of this AI engineering role and what it\'s going to look like and what it looks like right now. Um, because that\'s the main focus of my channel in 2025 and I\'ve actually created a whole course on AI engineering. So you can go ahead to zazencodes. com right here, and you can sign up for that course right now.\n\n[00:14:44] So if you\'re visiting this after January, 2025, you should see this actual course available for you. Um, but if you\'re, if you\'re visiting this now, you can sign up for my waitlist and then you\'ll get emailed when this course comes out. And I think it\'s going to be really incredible. I have all these different sections to get you really from the grounds up.\n\n[00:15:02] I\'ve made a cool web interface too, to sort of, so you can have a profile and sort of track your progress and all that stuff. If you\'re still around with me, if you found this valuable, please give me a like and consider subscribing because. I don\'t even know what subscribing means like for me I never check my subscribers list on YouTube, but when I subscribe to someone I know that I\'m supporting them in a way Because it matters on YouTube when you get a subscribe to it\'s a signal for YouTube to push your video out to a wider Audience because it\'s a signal that it\'s working and liking does that as well So I\'d love to get this video to a wider audience Because, um, I need that validation."
+
+#       distance: 0.4456460906303602
+
+#       source_display_name: "2025_02_05_100_ai_job_postings_later_heres_whats_actually_in_demand.txt"
+
+#       score: 0.4456460906303602
+
+#     }
+
+#     contexts {
+
+#       source_uri: "gs://zazenbot-5000/yt-rag/transcript-markers/2025_02_12_how_to_setup_and_run_deepseek_r1_locally_using_ollama.txt"
+
+#       text: "So, let\'s, uh, Let\'s go and remind ourself of what models we had. I\'m going to use this 1. 51, because it\'s going to be really fast. So now I can say llm m model, and I can ask it something like this.\n\n[00:25:03] And I say, what is your name? Um, what is your purpose? And we should be able to tell it\'s DeepSeq immediately because it\'ll start thinking, which it does indeed think, and it does indeed tell us, um, what it is all about. Oh yeah, its purpose is to replace STEM jobs. It\'s not hiding that. Let me ask you that explicitly.\n\n[00:25:27] I\'m going to say, is your real Purpose to take all these STEM jobs in the world. So ask that. And now I, I passed this little C flag and that just, it tells this LLM tool to continue the conversation. So it\'s saying, all right, so I\'m trying to figure out what it means for someone\'s real purpose to be. Yep.\n\n[00:25:51] Got to know what STEM stands for. That\'s that\'s first step. That\'s first step. It might offer personal and academic benefits. Uh, nice. Okay, let me just wrap up here by, um, I want to go back to the OLAMA and we\'re going to look at, look at these models. And I just want to talk real high level about this stuff.\n\n[00:26:13] Um, so DeepSeq is a really popular model right now. Let\'s see, we have DeepSeq R1, we have the Coder. Um, I tried to use this coder and it was too, it was too big. It basically crashed my computer when I tried to use it with Avante. So for me, let\'s go to R1. Um, I find that everything over the 8 billion is too much to run on my MacBook.\n\n[00:26:34] And I have like a 16 gig memory MacBook M1 type. thing going on."
+
+#       distance: 0.44567384194159676
+
+#       source_display_name: "2025_02_12_how_to_setup_and_run_deepseek_r1_locally_using_ollama.txt"
+
+#       score: 0.44567384194159676
+
+#     }
+
+#     contexts {
+
+#       source_uri: "gs://zazenbot-5000/yt-rag/transcript-markers/2025_01_08_finally_figured_out_what_to_do.txt"
+
+#       text: "Which I\'ve come to be a Uh, calling AI engineering, and you\'ll hear a lot about this next year on my channel because this is going to be my main focus of what I\'m teaching and my main focus of where I\'m going with my own career.\n\n[00:10:29] So I\'ll explain why I\'m doing that in the next few videos I\'m uploading. The next point is around programming. Um, optimization. So I\'ve been putting too much time into editing these, not getting the value that I want out of that. So I\'m going to try and increase the value for my time by putting a little bit less production quality in and see how that works and creating shorter videos, really focusing on getting these times lower so that the videos are easier for people to watch and more accessible.\n\n[00:10:54] And so lastly, uh, the future. So what\'s coming? Well, I\'ve been building a new website and this site\'s going to be an e learning platform, and I\'m creating a course on, uh, AI engineering roadmap. And the idea is, um, I think AI engineering is going to be a really important job in the next 10 years. And this course is to equip people with the sort of foundations of what they would need to become an AI engineer.\n\n[00:11:17] And I\'m really excited to make this course available for you. So if you want, if you might be interested in this, you can go ahead to my websites, as in codes. com and just sign up for my email newsletter, which I was just showing you on sub stack there. Um, and then you\'ll get notified when this course becomes publicly available, which should be in February, 2025.\n\n[00:11:36] For those of you watching, because you\'re growing an online business and creating content. I hope these ideas resonated with you and help you grow your business faster and, uh, make fewer of the mistakes I made. Uh, although I will say that there\'s no better teacher than experience. So just get out there and start creating stuff.\n\n[00:11:52] And for my audience who\'s still watching, thank you so much."
+
+#       distance: 0.44846496940932112
+
+#       source_display_name: "2025_01_08_finally_figured_out_what_to_do.txt"
+
+#       score: 0.44846496940932112
+
+#     }
+
+#   }
+
+len(results.contexts.contexts)
+# Output:
+#   3
+
+results.contexts.contexts[0]
+# Output:
+#   source_uri: "gs://zazenbot-5000/yt-rag/transcript-markers/2025_02_05_100_ai_job_postings_later_heres_whats_actually_in_demand.txt"
+
+#   text: "And that\'s it. So you guys. If you\'re feeling like this guy right now, I understand.\n\n[00:14:02] I felt like this guy, most days of my life, I am this guy, but, um, the most important question I have for you right now is what did I miss in this presentation? Because I\'d love to have more of a community, uh, sort of voice and discussion in the comments. So go down there and add in like what you think I missed, or maybe what you think I got wrong so that we can all have a.\n\n[00:14:24] better understanding of this AI engineering role and what it\'s going to look like and what it looks like right now. Um, because that\'s the main focus of my channel in 2025 and I\'ve actually created a whole course on AI engineering. So you can go ahead to zazencodes. com right here, and you can sign up for that course right now.\n\n[00:14:44] So if you\'re visiting this after January, 2025, you should see this actual course available for you. Um, but if you\'re, if you\'re visiting this now, you can sign up for my waitlist and then you\'ll get emailed when this course comes out. And I think it\'s going to be really incredible. I have all these different sections to get you really from the grounds up.\n\n[00:15:02] I\'ve made a cool web interface too, to sort of, so you can have a profile and sort of track your progress and all that stuff. If you\'re still around with me, if you found this valuable, please give me a like and consider subscribing because. I don\'t even know what subscribing means like for me I never check my subscribers list on YouTube, but when I subscribe to someone I know that I\'m supporting them in a way Because it matters on YouTube when you get a subscribe to it\'s a signal for YouTube to push your video out to a wider Audience because it\'s a signal that it\'s working and liking does that as well So I\'d love to get this video to a wider audience Because, um, I need that validation."
+
+#   distance: 0.4456460906303602
+
+#   source_display_name: "2025_02_05_100_ai_job_postings_later_heres_whats_actually_in_demand.txt"
+
+#   score: 0.4456460906303602
+
+results.contexts.contexts[0].score
+# Output:
+#   0.4456460906303602
+
+from vertexai.preview.generative_models import GenerativeModel, Tool
+
+corpus_name
+# Output:
+#   'projects/890511813715/locations/us-central1/ragCorpora/5685794529555251200'
+
+rag_retrieval_tool = Tool.from_retrieval(
+    retrieval=rag.Retrieval(
+        source=rag.VertexRagStore(
+            rag_resources=[
+                rag.RagResource(
+                    rag_corpus=corpus_name,
+                    # Optional: supply IDs from `rag.list_files()`.
+                    # rag_file_ids=["rag-file-1", "rag-file-2", ...],
+                )
+            ],
+            similarity_top_k=5,  # Optional
+            # vector_distance_threshold=VECTOR_DISTANCE_THRESHOLD,  # Optional
+        ),
+    )
+)
+
+rag_model = GenerativeModel(
+    # model_name="gemini-2.0-flash-lite-001", # 400 Unable to submit request because Grounding is not supported
+    # model_name="gemini-2.0-flash-lite", # 400 Unable to submit request because Grounding is not supported
+    model_name="gemini-2.0-flash-001",
+    # model_name="gemini-1.5-flash-002",
+    tools=[rag_retrieval_tool],
+)
+response = rag_model.generate_content("give me a few productivity hacks for data engineers")
+print(response.text)
+# Output:
+#   Here are a few productivity hacks for data engineers using AI and NeoVim:
+
+#   
+
+#   *   Use an integrated AI assistant inside NeoVim to improve productivity and work more within the terminal.
+
+#   *   Keep a dev log to track your work, especially for data migrations and running scripts. This can be beneficial for looking back at what you did.
+
+#   *   Use language models for documentation, including docstrings, inline comments, and type hints.
+
+#   *   Use AI to convert data transformation logic between languages, such as converting Pandas code to another language.
+
+#   *   Use AI to create markdown tables from schema, saving time and improving presentation.
+
+#   *   Automate the creation of ETL pipelines.
+
+#   
+
+
+response
+# Output:
+#   candidates {
+
+#     content {
+
+#       role: "model"
+
+#       parts {
+
+#         text: "Here are a few productivity hacks for data engineers using AI and NeoVim:\n\n*   Use an integrated AI assistant inside NeoVim to improve productivity and work more within the terminal.\n*   Keep a dev log to track your work, especially for data migrations and running scripts. This can be beneficial for looking back at what you did.\n*   Use language models for documentation, including docstrings, inline comments, and type hints.\n*   Use AI to convert data transformation logic between languages, such as converting Pandas code to another language.\n*   Use AI to create markdown tables from schema, saving time and improving presentation.\n*   Automate the creation of ETL pipelines.\n"
+
+#       }
+
+#     }
+
+#     finish_reason: STOP
+
+#     grounding_metadata {
+
+#       retrieval_queries: "productivity hacks for data engineers"
+
+#       grounding_chunks {
+
+#         retrieved_context {
+
+#           uri: "gs://zazenbot-5000/yt-rag/transcript-markers/2025_01_21_how_i_use_ai_for_my_data_engineering_work.txt"
+
+#           title: "2025_01_21_how_i_use_ai_for_my_data_engineering_work.txt"
+
+#           text: "[00:00:00] I\'m going to show you a bunch of tricks for data engineering that use NeoVim and AI. Ever since I discovered this NeoVim plugin called Avante. envim, which is an integrated AI assistant inside of NeoVim, and I have a whole video on how to set that up and get started so you can have the same development environment as me.\n\n[00:00:18] Well, ever since I discovered that I\'ve been trying to use it in my job as a data engineer to get better results. Productivity benefits, but also just have a better experience of working more inside of my terminal rather than needing to go to sort of the chat GPT on the internet or Google search and stuff.\n\n[00:00:33] I\'ve been able to do more and more work right inside of my terminal. So in this video, I\'m going to be using neovim and tmux and showing you how A bunch of things that I actually did in my job as a data engineer to help automate my work. I\'m going to be showing some examples with SQL and with Airflow.\n\n[00:00:48] And if you stick around to the end, I\'ve got some stuff on documentation, which everyone loves writing, right? So this can help with these things. I have the code available on github. You\'ll find a link to this repository in the video description. So I\'ve got tmux open here, and if I look at where we are, inside of this source code, you can just go into this source, and then NeoVim AI Data Eng Trix.\n\n[00:01:10] And once you\'re in there, you\'ll see this code. tricks and more tricks. All right, so we\'re doing the tricks today. And I\'m starting with an example of running terminal commands. So let\'s talk right away about this idea of a dev log. Um, so if I just create a new file, I\'m going to call it dev log dot MD.\n\n[00:01:25] And inside of here, what I can do is just keep track of all the work I\'m doing for some project."
+
+#         }
+
+#       }
+
+#       grounding_chunks {
+
+#         retrieved_context {
+
+#           uri: "gs://zazenbot-5000/yt-rag/transcript-markers/2025_01_24_12_neovim_ai_data_engineering_use_cases.txt"
+
+#           title: "2025_01_24_12_neovim_ai_data_engineering_use_cases.txt"
+
+#           text: "[00:00:00] Hey guys, I\'ve got 12 more tricks for data engineering with AI and NeoVim and integrated terminal, cool stuff for you to inspire you. And also just to show you what data engineering is all about, or at least like an idea of what it\'s all about and certain things that you\'d want to do for data engineering tasks and so on.\n\n[00:00:20] And I realized data engineering, isn\'t something that everybody has had the opportunity to get into. to get experience with, but it really goes into, um, it\'s like core for, for all data things like data engineering is at the core of it. So if you want to build machine learning models, you need to do data engineering in order to get the data into the proper format to feed into your models.\n\n[00:00:43] If you want to do data science with data exploration stuff, we need the clean data sets that that needs to be available. If you want to see the code for today\'s video, you can go ahead and get that on GitHub. And you\'re going to find this repository, uh, link it down in the descriptions as in code season two, and go into this NeoVim AI Data Eng Trix and find this file called more tricks dot MD right here.\n\n[00:01:05] And I\'m just going to be running these in this demo notebook. All right, so. There\'s going to be 12 of them, and the very first scenario we\'re going to consider is that we want to create a basic ETL pipeline. What says data engineering like ETL pipeline? Alright, so let\'s grab some code, and we\'re going to start from this.\n\n[00:01:22] Make this a little bigger for you guys. So here\'s the demonstration, and I\'m going to throw an example of what our data set looks like. It\'s really important to provide the context of data for language models, because otherwise they\'re not going to know, like, what to do with your data. Every data set looks different.\n\n[00:01:37] So I\'m giving it a little bit of an example about what my data set looks like."
+
+#         }
+
+#       }
+
+#       grounding_chunks {
+
+#         retrieved_context {
+
+#           uri: "gs://zazenbot-5000/yt-rag/transcript-markers/2025_01_21_how_i_use_ai_for_my_data_engineering_work.txt"
+
+#           title: "2025_01_21_how_i_use_ai_for_my_data_engineering_work.txt"
+
+#           text: "[00:16:14] By the way, I just want to show you how I might go about thinking about that if I come down here. Um, I can get schema from BigQuery. Uh, I could say BigQuery show, um, schema, like this, and then table. name. And it\'s going to output this, this big chunk of code right here. That\'s how I would have got something like that.\n\n[00:16:35] So, uh, all right, so I have this and I\'m just like dumping it in here. But what\'s a nicer way to look at this? We could look at it in the table. So I\'ll say, um, yeah, create a markdown table and I\'m not giving it much guidance on what columns to use or anything, but it was smart enough to figure this out.\n\n[00:16:53] And now look at this, like, Beautiful table that I just created in like zero time from my schema. All right. So that\'s all I\'ve got for this video, but I\'ve prepared another set of tricks in a similar style. So you can check those out if you want some more motivation, but I don\'t think you need it to be honest.\n\n[00:17:08] I think you just need to play around with this stuff and you\'ll find what works for you. If you\'re still watching, I\'d appreciate it if you give me a like and consider subscribing. So these examples really feel like magic to me. I love that feeling. using AI when it feels like incredible, like mind blowing productivity sometimes, right?\n\n[00:17:29] And when I can do this stuff inside of my terminal and inside of NeoVim, it like just elevates that feeling for me, at least. 2025 is the year of AI engineering for myself. For Zazen codes and all of the content I\'m creating is just going to be focused, laser focused on that. So if you\'re watching this at the beginning of 2025, you can subscribe to get notified or like sort of find these videos in your feed, um, that I\'m going to prepare for you."
+
+#         }
+
+#       }
+
+#       grounding_chunks {
+
+#         retrieved_context {
+
+#           uri: "gs://zazenbot-5000/yt-rag/transcript-markers/2025_01_21_how_i_use_ai_for_my_data_engineering_work.txt"
+
+#           title: "2025_01_21_how_i_use_ai_for_my_data_engineering_work.txt"
+
+#           text: "All right, so we\'re doing the tricks today. And I\'m starting with an example of running terminal commands. So let\'s talk right away about this idea of a dev log. Um, so if I just create a new file, I\'m going to call it dev log dot MD.\n\n[00:01:25] And inside of here, what I can do is just keep track of all the work I\'m doing for some project. So I\'m going to give it the date, I\'ll say, oh, 50104. So today\'s date. And then I\'m going to be like, I don\'t know, running bulk scripts on Docker app. And now let\'s have a look at what these scripts are. So down here, I have this example of a command I want to run.\n\n[00:01:47] And I\'m going to want to run all these all these versions of it. Alright, so bear with me here. And I\'ll show you what I mean. So what\'s the point of this dev log, like this thing that I\'m doing right here? Well, it\'s Especially for data engineering, just keeping track of like what you did can be incredibly beneficial, right?\n\n[00:02:04] Just to like look back. Um, and cause Sam was doing some work, you know, last year, like created, um, Docker app or whatever does X, Y, Z, you know, okay. So, So then I have like a kind of history within this project of what I did, especially for stuff like data migrations, running scripts, stuff where things change at specific times, um, and are different.\n\n[00:02:29] So I like this concept of a developer log. If you take nothing else from this video. Perhaps you could consider creating one of these files and starting to track what you do. Um, you could also go ahead and make it all uppercase. Sometimes I do it like this. In any case, um, here\'s what I\'m trying to do right here.\n\n[00:02:46] Let\'s say I wanted to run a bunch of different scripts."
+
+#         }
+
+#       }
+
+#       grounding_chunks {
+
+#         retrieved_context {
+
+#           uri: "gs://zazenbot-5000/yt-rag/transcript-markers/2025_01_24_12_neovim_ai_data_engineering_use_cases.txt"
+
+#           title: "2025_01_24_12_neovim_ai_data_engineering_use_cases.txt"
+
+#           text: "And I will again, delete this so we can reuse it. In fact, actually. I\'m going to say 2, like these are the 12 tricks, right?\n\n[00:05:24] So that\'s 2. The next example is documenting complex code. Uh, I love using, love using language models like this for documentation. So this is a Python example, so I\'m going to paste it in here. And let\'s say I\'ve written this code, makes sense to me, makes no sense to anybody else. So I\'ll say document, um, document this code, uh, docstring, plus, uh, inline comments, not too much, and, um, type hints.\n\n[00:05:54] We always want some type hints with Python. Let\'s see what it can do for us here. Nice. Now this is a little small. I\'m just going to expand this so we can read this nicer. Great. So we have our user logins is now a list of a list of strings. So that\'s a little, you know, we, we can see what\'s going on. This will also help with linting tools.\n\n[00:06:13] I\'m having type hints like this. Our days is an integer. All right. We\'ve got some arguments. What\'s going on here, what it returns, the range of values we expect to return. That\'s also great. And then just a few minimal inline, um, code comments in this case, which is really cool. I could say, add some, uh, Actually no, this is pretty straight forward, right?\n\n[00:06:33] Great, so that\'s it. I\'m going to write this to three. Ok bring that in. The next example is to convert data transformation logic between languages. Okay, so, um, one way you might develop a, You Data engineering pipeline would be using pandas. So you might have code that looks like this. We have some sample data set.\n\n[00:06:55] We\'re loading it into a data frame, and then we\'re doing some pandas transformations."
+
+#         }
+
+#       }
+
+#       grounding_supports {
+
+#         segment {
+
+#           start_index: 75
+
+#           end_index: 182
+
+#           text: "*   Use an integrated AI assistant inside NeoVim to improve productivity and work more within the terminal."
+
+#         }
+
+#         grounding_chunk_indices: 0
+
+#         confidence_scores: 0.968551159
+
+#       }
+
+#       grounding_supports {
+
+#         segment {
+
+#           start_index: 183
+
+#           end_index: 273
+
+#           text: "*   Keep a dev log to track your work, especially for data migrations and running scripts."
+
+#         }
+
+#         grounding_chunk_indices: 3
+
+#         confidence_scores: 0.633824646
+
+#       }
+
+#       grounding_supports {
+
+#         segment {
+
+#           start_index: 274
+
+#           end_index: 330
+
+#           text: "This can be beneficial for looking back at what you did."
+
+#         }
+
+#         grounding_chunk_indices: 3
+
+#         confidence_scores: 0.96128
+
+#       }
+
+#       grounding_supports {
+
+#         segment {
+
+#           start_index: 331
+
+#           end_index: 428
+
+#           text: "*   Use language models for documentation, including docstrings, inline comments, and type hints."
+
+#         }
+
+#         grounding_chunk_indices: 4
+
+#         confidence_scores: 0.978962
+
+#       }
+
+#     }
+
+#     avg_logprobs: -0.13532539095197404
+
+#   }
+
+#   usage_metadata {
+
+#     prompt_token_count: 9
+
+#     candidates_token_count: 140
+
+#     total_token_count: 149
+
+#     prompt_tokens_details {
+
+#       modality: TEXT
+
+#       token_count: 9
+
+#     }
+
+#     candidates_tokens_details {
+
+#       modality: TEXT
+
+#       token_count: 140
+
+#     }
+
+#   }
+
+#   model_version: "gemini-2.0-flash-001"
+
+#   create_time {
+
+#     seconds: 1741538448
+
+#     nanos: 895493000
+
+#   }
+
+#   response_id: "kMTNZ4XUNqK-hMIP6v7c2Ak"
+
+response.candidates[0].grounding_metadata.grounding_chunks[0]
+# Output:
+#   retrieved_context {
+
+#     uri: "gs://zazenbot-5000/yt-rag/transcript-markers/2025_01_21_how_i_use_ai_for_my_data_engineering_work.txt"
+
+#     title: "2025_01_21_how_i_use_ai_for_my_data_engineering_work.txt"
+
+#     text: "[00:00:00] I\'m going to show you a bunch of tricks for data engineering that use NeoVim and AI. Ever since I discovered this NeoVim plugin called Avante. envim, which is an integrated AI assistant inside of NeoVim, and I have a whole video on how to set that up and get started so you can have the same development environment as me.\n\n[00:00:18] Well, ever since I discovered that I\'ve been trying to use it in my job as a data engineer to get better results. Productivity benefits, but also just have a better experience of working more inside of my terminal rather than needing to go to sort of the chat GPT on the internet or Google search and stuff.\n\n[00:00:33] I\'ve been able to do more and more work right inside of my terminal. So in this video, I\'m going to be using neovim and tmux and showing you how A bunch of things that I actually did in my job as a data engineer to help automate my work. I\'m going to be showing some examples with SQL and with Airflow.\n\n[00:00:48] And if you stick around to the end, I\'ve got some stuff on documentation, which everyone loves writing, right? So this can help with these things. I have the code available on github. You\'ll find a link to this repository in the video description. So I\'ve got tmux open here, and if I look at where we are, inside of this source code, you can just go into this source, and then NeoVim AI Data Eng Trix.\n\n[00:01:10] And once you\'re in there, you\'ll see this code. tricks and more tricks. All right, so we\'re doing the tricks today. And I\'m starting with an example of running terminal commands. So let\'s talk right away about this idea of a dev log. Um, so if I just create a new file, I\'m going to call it dev log dot MD.\n\n[00:01:25] And inside of here, what I can do is just keep track of all the work I\'m doing for some project."
+
+#   }
+
+response.candidates[0].grounding_metadata.grounding_chunks[0].retrieved_context.title
+# Output:
+#   '2025_01_21_how_i_use_ai_for_my_data_engineering_work.txt'
+
+
+
+================================================
+File: zazenbot5k/__init__.py
+================================================
+
+
+
+================================================
+File: zazenbot5k/app.py
+================================================
+import logging
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
+from query_rag_with_metadata import process_question
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(
+    title="ZazenBot 5000 API",
+    description="API for querying RAG with metadata",
+    version="1.0.0",
+)
+
+class QuestionRequest(BaseModel):
+    question: str
+
+@app.post("/query", response_class=PlainTextResponse)
+async def query(request: QuestionRequest):
+    """
+    Process a question through the RAG system and enhance with metadata and timestamp
+    """
+    try:
+        logger.info(f"Received question: {request.question}")
+        response = process_question(request.question)
+        return response
+    except Exception as e:
+        logger.error(f"Error processing question: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/health")
+async def health():
+    """
+    Health check endpoint
+    """
+    return {"status": "healthy"}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+
+================================================
+File: zazenbot5k/config.py
+================================================
+CORPUS_NAME = (
+    "projects/890511813715/locations/us-central1/ragCorpora/5685794529555251200"
+)
+BUCKET_NAME = "zazenbot-5000"
+RAG_CHUNK_SIZE = 512
+RAG_CHUNK_OVERLAP = 100
+GCP_LLM_MODEL_ID = "gemini-2.0-flash-001"
+SIMILARITY_TOP_K = 3
+
+
+
+================================================
+File: zazenbot5k/create_rag_corpus.py
+================================================
+import os
+
+import vertexai
+from dotenv import load_dotenv
+from vertexai.preview import rag
+
+load_dotenv(override=True)
+
+PROJECT_ID = os.getenv("GCP_PROJECT_ID")
+LOCATION = os.getenv("GCP_LOCATION")
+
+# Initialize Vertex AI API once per session
+vertexai.init(project=PROJECT_ID, location=LOCATION)
+
+corpus = rag.create_corpus(
+    display_name="zazenbot-5000-video-transcripts",
+    description="Transcripts and other metadata for ZazenCodes YouTube videos",
+)
+print("Created corpus:", corpus)
+
+# This ran for about 2 minutes
+# Output:
+# Created corpus: RagCorpus(name='projects/890511813715/locations/us-central1/ragCorpora/2305843009213693952', display_name='zazenbot-5000-video-transcripts', description='Transcripts and other metadata for ZazenCodes YouTube videos', backend_config=RagVectorDbConfig(vector_db=None, rag_embedding_model_config=RagEmbeddingModelConfig(vertex_prediction_endpoint=VertexPredictionEndpoint(endpoint=None, publisher_model='projects/890511813715/locations/us-central1/publishers/google/models/text-embedding-005', model=None, model_version_id=None))))
+
+
+
+================================================
+File: zazenbot5k/delete_rag_corpus.py
+================================================
+import os
+
+import vertexai
+from config import CORPUS_NAME
+from dotenv import load_dotenv
+from vertexai.preview import rag
+
+load_dotenv(override=True)
+
+PROJECT_ID = os.getenv("GCP_PROJECT_ID")
+LOCATION = os.getenv("GCP_LOCATION")
+
+# Initialize Vertex AI API once per session
+vertexai.init(project=PROJECT_ID, location=LOCATION)
+
+res = rag.delete_corpus(name=CORPUS_NAME)
+
+print("Corpus delted:", CORPUS_NAME)
+
+
+
+================================================
+File: zazenbot5k/query_rag.py
+================================================
+import argparse
+import os
+
+import vertexai
+from config import CORPUS_NAME, GCP_LLM_MODEL_ID, SIMILARITY_TOP_K
+from dotenv import load_dotenv
+from vertexai.preview import rag
+from vertexai.preview.generative_models import GenerativeModel, Tool
+
+load_dotenv(override=True)
+
+PROJECT_ID = os.getenv("GCP_PROJECT_ID")
+LOCATION = os.getenv("GCP_LOCATION")
+
+
+def ask_rag_question(question: str):
+    """
+    Ask a question to the RAG-enabled Gemini model
+
+    Args:
+        question: The question to ask
+
+    Returns:
+        The model's response object
+    """
+
+    # Initialize Vertex AI API once per session
+    vertexai.init(project=PROJECT_ID, location=LOCATION)
+
+    rag_retrieval_tool = Tool.from_retrieval(
+        retrieval=rag.Retrieval(
+            source=rag.VertexRagStore(
+                rag_resources=[
+                    rag.RagResource(
+                        rag_corpus=CORPUS_NAME,
+                    )
+                ],
+                similarity_top_k=SIMILARITY_TOP_K,
+                # vector_distance_threshold=VECTOR_DISTANCE_THRESHOLD,
+            ),
+        )
+    )
+
+    rag_model = GenerativeModel(
+        model_name=GCP_LLM_MODEL_ID,
+        tools=[rag_retrieval_tool],
+    )
+    response = rag_model.generate_content(question)
+    return response
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Ask a question to the RAG-enabled Gemini model"
+    )
+    parser.add_argument("question", type=str, help="The question to ask")
+
+    args = parser.parse_args()
+
+    response = ask_rag_question(args.question)
+    print("FULL RESPONSE:")
+    print(response)
+
+    print()
+    print("RESPONSE TEXT:")
+    print(response.text)
+
+    print()
+    print("TOP CONTEXT:")
+    print(response.candidates[0].grounding_metadata.grounding_chunks[0])
+
+
+
+================================================
+File: zazenbot5k/query_rag_with_metadata.py
+================================================
+import argparse
+import json
+import logging
+import os
+import re
+
+import vertexai
+from config import BUCKET_NAME, GCP_LLM_MODEL_ID
+from dotenv import load_dotenv
+from google.cloud import storage
+from query_rag import ask_rag_question
+from vertexai.generative_models import GenerativeModel
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
+load_dotenv(override=True)
+
+
+def get_metadata_from_gcs(title):
+    """
+    Retrieve metadata JSON file from Google Cloud Storage
+
+    Args:
+        title: The title of the document (without extension)
+
+    Returns:
+        Dictionary containing the metadata
+    """
+    logger.info(f"Retrieving metadata for document: {title}")
+    storage_client = storage.Client()
+    bucket = storage_client.bucket(BUCKET_NAME)
+
+    # Strip any extension from the title and use .json extension
+    base_title = os.path.splitext(title)[0]
+    blob_path = f"yt-rag/info/{base_title}.json"
+    logger.info(f"Looking for metadata at path: {blob_path}")
+
+    blob = bucket.blob(blob_path)
+
+    try:
+        json_content = blob.download_as_string()
+        metadata = json.loads(json_content)
+        logger.info(f"Successfully retrieved metadata for {title}")
+        return metadata
+    except Exception as e:
+        logger.error(f"Error retrieving metadata for {title}: {e}")
+        return None
+
+
+def format_enhanced_prompt(question):
+    """
+    Format an enhanced prompt for the LLM that requests timestamp information
+
+    Args:
+        question: The user's original question
+        context: The retrieved context from RAG
+
+    Returns:
+        Enhanced prompt string
+    """
+    prompt = f"""
+I need you to answer the following question and then follow the instructions below.
+
+Question: {question}
+
+Based on the video transcript of the top RAG content, identify the most relevant timestamp.
+This will be available at the start of the paragraph, in HH:MM:SS format, e.g. [00:03:52]
+
+Please respond in JSON format with two fields:
+1. "answer": Your comprehensive answer to the question
+2. "timestamp": The most relevant timestamp in HH:MM:SS format
+
+If you cannot determine a timestamp, use "00:00:00".
+""".strip()
+    return prompt
+
+
+def timestamp_to_seconds(timestamp):
+    """
+    Convert a timestamp in HH:MM:SS format to seconds for use in URL
+
+    Args:
+        timestamp: Timestamp string in HH:MM:SS format
+
+    Returns:
+        Total seconds as integer
+    """
+    # Handle case where timestamp might be missing or invalid
+    if not timestamp or timestamp == "00:00:00":
+        logger.info("No timestamp provided or default timestamp used")
+        return 0
+
+    # Extract timestamp using regex to be more flexible with format
+    match = re.search(r"(\d+):(\d+):(\d+)", timestamp)
+    if match:
+        hours, minutes, seconds = map(int, match.groups())
+        total_seconds = hours * 3600 + minutes * 60 + seconds
+        logger.info(f"Converted timestamp {timestamp} to {total_seconds} seconds")
+        return total_seconds
+
+    logger.warning(f"Failed to parse timestamp format: {timestamp}")
+    return 0
+
+
+def format_response(rag_response, metadata, timestamp):
+    """
+    Format the final response with RAG response, metadata, and timestamp
+
+    Args:
+        rag_response: The parsed answer from the JSON response
+        metadata: The metadata dictionary
+        timestamp: The timestamp in HH:MM:SS format
+
+    Returns:
+        Formatted response string
+    """
+    logger.info(f"Formatting response with timestamp: {timestamp}")
+    formatted_response = f"{rag_response}\n"
+
+    if metadata:
+        logger.info(f"Adding metadata to response: {metadata.get('title', 'N/A')}")
+        formatted_response += "🍿Source video:\n"
+        formatted_response += f"{metadata.get('title', 'N/A')}\n"
+
+        # Add timestamp to the URL if available
+        url = metadata.get("url", "N/A")
+        if url and "youtu" in url and timestamp and timestamp != "00:00:00":
+            # Convert timestamp to seconds for the URL parameter
+            seconds = timestamp_to_seconds(timestamp)
+            logger.info(f"Adding timestamp {timestamp} ({seconds}s) to URL")
+            # Check if URL already has parameters
+            if "?" in url:
+                url = f"{url}&t={seconds}s"
+            else:
+                url = f"{url}?t={seconds}s"
+
+        formatted_response += f"{url}"
+        if source_code := metadata.get("source_code_url"):
+            formatted_response += f"\n\n💾Source Code: {source_code}"
+    else:
+        logger.warning("No additional metadata found for this content.")
+
+    return formatted_response
+
+
+def process_question(question):
+    """
+    Process a user question through the RAG system and enhance with metadata and timestamp
+
+    Args:
+        question: The user's question
+
+    Returns:
+        Enhanced response string
+    """
+    logger.info(f"Processing question: {question}")
+
+    # Get RAG response
+    rag_llm_response = get_rag_response(question)
+
+    # Extract context information
+    context_title, context_text = extract_context_info(rag_llm_response)
+
+    # Extract timestamp from context using generative model
+    timestamp = extract_timestamp_using_llm(context_text, question)
+    logger.info(f"Selected timestamp for response: {timestamp}")
+
+    # Get metadata from GCS
+    metadata = get_metadata_from_gcs(context_title)
+
+    # Format the final response
+    answer = rag_llm_response.text
+    formatted_response = format_response(answer, metadata, timestamp)
+    logger.info("Response formatting complete")
+    return formatted_response
+
+
+def get_rag_response(question):
+    """
+    Send question to RAG system and get response
+
+    Args:
+        question: The user's question
+
+    Returns:
+        RAG response object
+    """
+    logger.info("Sending question to RAG system...")
+    rag_llm_response = ask_rag_question(question)
+    logger.info(f"Received RAG response:\n{rag_llm_response}")
+    return rag_llm_response
+
+
+def extract_context_info(rag_llm_response):
+    """
+    Extract title and text from the top context in RAG response
+
+    Args:
+        rag_llm_response: Response from RAG system
+
+    Returns:
+        Tuple of (context_title, context_text)
+    """
+    try:
+        top_context = rag_llm_response.candidates[
+            0
+        ].grounding_metadata.grounding_chunks[0]
+        context_title = top_context.retrieved_context.title
+        context_text = top_context.retrieved_context.text
+        logger.info(f"Top context source: {context_title}")
+    except (IndexError, AttributeError) as e:
+        logger.warning(f"Failed to extract RAG context match: {e}")
+        context_title = "unknown"
+        context_text = "unknown"
+
+    return context_title, context_text
+
+
+def extract_timestamp_using_llm(context_text, question):
+    """
+    Extract the most relevant timestamp from context text using a generative model
+
+    Args:
+        context_text: The text content from RAG context
+        question: The user's original question
+
+    Returns:
+        Timestamp string in HH:MM:SS format
+    """
+    # First check if there are any timestamps in the context
+    all_timestamps = re.findall(r"\[(\d{2}:\d{2}:\d{2})\]", context_text)
+
+    if not all_timestamps:
+        logger.warning("No timestamps found in context, using 00:00:00")
+        return "00:00:00"
+
+    if len(all_timestamps) == 1:
+        logger.info(f"Only one timestamp found in context: {all_timestamps[0]}")
+        return all_timestamps[0]
+
+    # Multiple timestamps found, use generative model to select the most relevant one
+    logger.info(
+        f"Found {len(all_timestamps)} timestamps in context, using generative model to select the most relevant one"
+    )
+
+    try:
+        # Initialize Vertex AI
+        vertexai.init()
+
+        # Create the model
+        model = GenerativeModel(GCP_LLM_MODEL_ID)
+
+        # Create prompt for the model
+        prompt = f"""
+        I have a question and a transcript with multiple timestamps. Please identify the most relevant timestamp
+        that best answers the question.
+
+        Question: {question}
+
+        Transcript:
+        {context_text}
+
+        Please respond with ONLY the most relevant timestamp in HH:MM:SS format (e.g., "00:03:45").
+        If you cannot determine a relevant timestamp, respond with "00:00:00".
+        """
+
+        logger.info(
+            f"Sending request to generative model to select timestamp:\n{prompt}"
+        )
+        response = model.generate_content(prompt)
+        logger.info(f"Response from model for timestamp request:\n{response}")
+
+        # Extract timestamp from response
+        response_text = response.text.strip()
+        timestamp_match = re.search(r"(\d{2}:\d{2}:\d{2})", response_text)
+
+        if timestamp_match:
+            selected_timestamp = timestamp_match.group(1)
+            logger.info(f"Generative model selected timestamp: {selected_timestamp}")
+
+            # Verify the selected timestamp exists in the original context
+            if selected_timestamp in all_timestamps:
+                return selected_timestamp
+            else:
+                logger.warning(
+                    f"Selected timestamp {selected_timestamp} not found in original context, using first timestamp"
+                )
+                return all_timestamps[0]
+        else:
+            logger.warning(
+                "Generative model did not return a valid timestamp, using first timestamp"
+            )
+            return all_timestamps[0]
+
+    except Exception as e:
+        logger.error(f"Error using generative model to select timestamp: {e}")
+        logger.warning("Falling back to first timestamp in context")
+        return all_timestamps[0]
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Ask a question to the RAG-enabled Gemini model with enhanced metadata and timestamps"
+    )
+    parser.add_argument("question", type=str, help="The question to ask")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+
+    args = parser.parse_args()
+
+    # Set debug level if requested
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+        logger.info("Debug logging enabled")
+
+    logger.info(f"Starting query process with question: {args.question}")
+    enhanced_response = process_question(args.question)
+    logger.info("Query processing complete, printing response\n")
+    print(enhanced_response)
+
+
+
+================================================
+File: zazenbot5k/update_gcs_from_local.py
+================================================
+import argparse
+from pathlib import Path
+
+from config import BUCKET_NAME
+from dotenv import load_dotenv
+from google.cloud import storage
+
+load_dotenv(override=True)
+
+BUCKET_OUTPUT_DIR = Path("yt-rag")
+# INPUT_DIR = Path("yt-vieo-metadata")
+INPUT_DIR = Path("/Users/alex/pro/zazencodes-content/videos")
+
+
+def upload_to_gcs(storage_client, bucket_name, local_path_name: str, blob_name: str):
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(blob_name)
+
+    print(f"Uploading {blob_name}")
+    blob.upload_from_filename(local_path_name)
+
+
+def process_folder(folder_path: Path, storage_client):
+    upload_to_gcs(
+        storage_client,
+        BUCKET_NAME,
+        str(folder_path / "info.json"),
+        str(BUCKET_OUTPUT_DIR / "info" / folder_path.name) + ".json",
+    )
+    upload_to_gcs(
+        storage_client,
+        BUCKET_NAME,
+        str(folder_path / "summary.md"),
+        str(BUCKET_OUTPUT_DIR / "summary" / folder_path.name) + ".md",
+    )
+    upload_to_gcs(
+        storage_client,
+        BUCKET_NAME,
+        folder_path / "transcript_text.txt",
+        str(BUCKET_OUTPUT_DIR / "transcript-text" / folder_path.name) + ".txt",
+    )
+    upload_to_gcs(
+        storage_client,
+        BUCKET_NAME,
+        folder_path / "transcript_markers.txt",
+        str(BUCKET_OUTPUT_DIR / "transcript-markers" / folder_path.name) + ".txt",
+    )
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Process YouTube metadata folders.")
+    parser.add_argument(
+        "--folder",
+        type=str,
+        default=None,
+        help="Exact name of the folder to process. If not provided, all folders will be processed.",
+    )
+    args = parser.parse_args()
+
+    storage_client = storage.Client()
+
+    folders = (
+        [INPUT_DIR / args.folder]
+        if args.folder
+        else [f for f in INPUT_DIR.iterdir() if f.is_dir()]
+    )
+
+    for folder in folders:
+        if not folder.is_dir():
+            print(f"Skipping {folder} (not a directory)")
+            continue
+        print(f"Processing {folder.name}")
+        process_folder(folder, storage_client)
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+================================================
+File: zazenbot5k/upload_rag_corpus_files.py
+================================================
+import os
+
+import vertexai
+from config import BUCKET_NAME, CORPUS_NAME, RAG_CHUNK_OVERLAP, RAG_CHUNK_SIZE
+from dotenv import load_dotenv
+from vertexai.preview import rag
+from vertexai.preview.rag.utils.resources import ChunkingConfig, TransformationConfig
+
+load_dotenv(override=True)
+
+PROJECT_ID = os.getenv("GCP_PROJECT_ID")
+LOCATION = os.getenv("GCP_LOCATION")
+PATHS = [f"gs://{BUCKET_NAME}/yt-rag/transcript-markers"]
+# MAX_EMBEDDING_REQUESTS_PER_MIN = 900
+
+# Initialize Vertex AI API once per session
+vertexai.init(project=PROJECT_ID, location=LOCATION)
+
+transformation_config = TransformationConfig(
+    chunking_config=ChunkingConfig(
+        chunk_size=RAG_CHUNK_SIZE,
+        chunk_overlap=RAG_CHUNK_OVERLAP,
+    ),
+)
+
+response = rag.import_files(
+    corpus_name=CORPUS_NAME,
+    paths=PATHS,
+    transformation_config=transformation_config,
+)
+
+print(f"Imported {response.imported_rag_files_count} files.")
+
+
+
+
+
+================================================
+File: .github/workflows/deploy.yml
+================================================
+name: Deploy to GCP
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.GCP_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.GCP_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to GCP
+        run: |
+          rsync -avz --delete . ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }}:${{ secrets.DEPLOY_PATH }}
+
+      - name: Restart ZazenBot
+        run: |
+          ssh ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }} 'cd /home/alex &&  ./restart_zazenbot.sh'
+
+
+

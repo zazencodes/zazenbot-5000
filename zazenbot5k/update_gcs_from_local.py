@@ -9,7 +9,7 @@ load_dotenv(override=True)
 
 BUCKET_OUTPUT_DIR = Path("yt-rag")
 # INPUT_DIR = Path("yt-vieo-metadata")
-INPUT_DIR = Path("~/pro/zazencodes-content/videos")
+INPUT_DIR = Path("/Users/alex/pro/zazencodes-content/videos")
 
 
 def upload_to_gcs(storage_client, bucket_name, local_path_name: str, blob_name: str):

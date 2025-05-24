@@ -13,12 +13,13 @@ PROJECT_ID = os.getenv("GCP_PROJECT_ID")
 LOCATION = os.getenv("GCP_LOCATION")
 
 
-def ask_rag_question(question: str):
+def ask_rag_question(question: str, persona: str):
     """
     Ask a question to the RAG-enabled Gemini model
 
     Args:
         question: The question to ask
+        persona: The persona to use for the question
 
     Returns:
         The model's response object
@@ -45,7 +46,10 @@ def ask_rag_question(question: str):
         model_name=GCP_LLM_MODEL_ID,
         tools=[rag_retrieval_tool],
     )
-    response = rag_model.generate_content(question)
+
+    question_with_persona = f"{question} Answer in the style of a {persona}."
+    print(question_with_persona)
+    response = rag_model.generate_content(question_with_persona)
     return response
 
 
